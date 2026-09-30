@@ -1,0 +1,11 @@
+services:
+  shortener:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - shortener-data:/app        # persist urls.db across restarts
+    restart: unless-stopped
+
+volumes:
+  shortener-data:

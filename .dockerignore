@@ -1,0 +1,9 @@
+build/
+*.o
+*.exe
+*.db
+*.db-wal
+*.db-shm
+.git/
+.vscode/
+*.md

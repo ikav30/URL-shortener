@@ -1,0 +1,12 @@
+# build artifacts
+build/
+*.o
+*.exe
+
+# database files (generated at runtime)
+*.db
+*.db-wal
+*.db-shm
+
+# editor
+.vscode/

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shortly — URL Shortener</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#f8fafc; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --accent:#6366f1; --accent-weak:#eef2ff;
+    --good:#16a34a; --bad:#dc2626;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 64px}
+  h1{margin:0;font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin-top:4px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .grid{display:grid;gap:16px}
+  .tiles{grid-template-columns:repeat(3,1fr);margin:24px 0}
+  .tile .k{font-size:13px;color:var(--muted)}
+  .tile .v{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:4px}
+  form{display:grid;gap:12px;grid-template-columns:1fr;margin-top:8px}
+  .row{display:grid;gap:12px;grid-template-columns:2fr 1fr 1fr}
+  input,select{padding:11px 12px;border:1px solid var(--line);border-radius:10px;
+        font-size:14px;background:#fff;color:var(--ink);width:100%}
+  input:focus,select:focus{outline:2px solid var(--accent-weak);border-color:var(--accent)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:11px 16px;
+        font-size:14px;font-weight:600;cursor:pointer}
+  button.ghost{background:#fff;color:var(--accent);border:1px solid var(--line);padding:6px 10px;font-size:12px}
+  .result{margin-top:16px;display:none;align-items:center;gap:18px}
+  .result .link{font-size:18px;font-weight:600;color:var(--accent);word-break:break-all}
+  .result #qr{background:#fff;padding:8px;border:1px solid var(--line);border-radius:10px}
+  .charts{grid-template-columns:1fr 1fr;margin-top:24px}
+  section h2{font-size:15px;margin:0 0 12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  td.orig{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  a.code{color:var(--accent);font-weight:600;text-decoration:none}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px}
+  .pill.live{background:#dcfce7;color:var(--good)}
+  .pill.exp{background:#fee2e2;color:var(--bad)}
+  .err{color:var(--bad);font-size:13px;margin-top:8px;display:none}
+  @media(max-width:720px){.tiles,.charts,.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🔗 Shortly</h1>
+    <div class="sub">A fast C++ URL shortener — cache-first reads, Base62 IDs, rate-limited, with analytics.</div>
+  </header>
+
+  <div class="grid tiles">
+    <div class="card tile"><div class="k">Total Links</div><div class="v" id="tLinks">0</div></div>
+    <div class="card tile"><div class="k">Total Clicks</div><div class="v" id="tClicks">0</div></div>
+    <div class="card tile"><div class="k">Active Links</div><div class="v" id="tActive">0</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Create a short link</h2>
+    <form id="form">
+      <div class="row">
+        <input id="url" type="url" placeholder="https://example.com/very/long/url" required />
+        <input id="alias" type="text" placeholder="custom alias (optional)" />
+        <select id="expiry">
+          <option value="0">Never expires</option>
+          <option value="3600">Expires in 1 hour</option>
+          <option value="86400">Expires in 1 day</option>
+          <option value="604800">Expires in 1 week</option>
+        </select>
+      </div>
+      <div><button type="submit">Shorten</button></div>
+    </form>
+    <div class="err" id="err"></div>
+    <div class="result" id="result">
+      <div>
+        <div class="sub">Your short link</div>
+        <a class="link" id="shortLink" href="#" target="_blank"></a><br/>
+        <button class="ghost" id="copyBtn">⧉ Copy</button>
+      </div>
+      <div id="qr"></div>
+    </div>
+  </div>
+
+  <div class="grid charts">
+    <section class="card"><h2>Clicks over time</h2><canvas id="lineChart" height="180"></canvas></section>
+    <section class="card"><h2>Top links by clicks</h2><canvas id="barChart" height="180"></canvas></section>
+  </div>
+
+  <section class="card" style="margin-top:24px">
+    <h2>All links</h2>
+    <table>
+      <thead><tr><th>Code</th><th>Original URL</th><th>Clicks</th><th>Created</th><th>Status</th><th></th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let lineChart, barChart;
+
+function fmtDate(unix){ return unix ? new Date(unix*1000).toLocaleDateString() : '—'; }
+function isActive(r){ return r.expires_at === 0 || r.expires_at*1000 > Date.now(); }
+
+async function refresh(){
+  const [urls, series] = await Promise.all([
+    fetch('/api/urls').then(r=>r.json()),
+    fetch('/api/timeseries').then(r=>r.json())
+  ]);
+
+  // tiles
+  $('#tLinks').textContent  = urls.length;
+  $('#tClicks').textContent = urls.reduce((s,r)=>s+r.clicks,0);
+  $('#tActive').textContent = urls.filter(isActive).length;
+
+  // table
+  $('#tbody').innerHTML = urls.map(r=>{
+    const live = isActive(r);
+    const status = r.expires_at===0
+      ? '<span class="pill live">permanent</span>'
+      : (live ? '<span class="pill live">active</span>' : '<span class="pill exp">expired</span>');
+    return `<tr>
+      <td><a class="code" href="/${r.code}" target="_blank">/${r.code}</a></td>
+      <td class="orig" title="${r.long_url}">${r.long_url}</td>
+      <td>${r.clicks}</td>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${status}</td>
+      <td><button class="ghost" onclick="showQR('${location.origin}/${r.code}',this)">QR</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="color:var(--muted)">No links yet — create one above.</td></tr>';
+
+  // line chart (clicks by day)
+  drawLine(series.map(p=>p.day), series.map(p=>p.clicks));
+  // bar chart (top 10 links by clicks)
+  const top = [...urls].sort((a,b)=>b.clicks-a.clicks).slice(0,10);
+  drawBar(top.map(r=>'/'+r.code), top.map(r=>r.clicks));
+}
+
+function drawLine(labels, data){
+  const ctx = $('#lineChart');
+  if(lineChart) lineChart.destroy();
+  lineChart = new Chart(ctx,{type:'line',
+    data:{labels,datasets:[{data,label:'clicks',borderColor:'#6366f1',
+      backgroundColor:'rgba(99,102,241,.12)',fill:true,tension:.3,pointRadius:3}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+}
+function drawBar(labels, data){
+  const ctx = $('#barChart');
+  if(barChart) barChart.destroy();
+  barChart = new Chart(ctx,{type:'bar',
+    data:{labels,datasets:[{data,label:'clicks',backgroundColor:'#6366f1',borderRadius:6}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+}
+
+let qrPopup;
+function showQR(url, btn){
+  if(qrPopup) qrPopup.remove();
+  qrPopup = document.createElement('div');
+  qrPopup.style.cssText='position:absolute;background:#fff;padding:10px;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:10';
+  const r = btn.getBoundingClientRect();
+  qrPopup.style.left = (window.scrollX + r.left - 130)+'px';
+  qrPopup.style.top  = (window.scrollY + r.bottom + 6)+'px';
+  document.body.appendChild(qrPopup);
+  new QRCode(qrPopup,{text:url,width:120,height:120});
+  setTimeout(()=>document.addEventListener('click',function h(e){
+    if(!qrPopup.contains(e.target)&&e.target!==btn){qrPopup.remove();qrPopup=null;document.removeEventListener('click',h);}
+  }),0);
+}
+
+$('#form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  $('#err').style.display='none';
+  const body = { url: $('#url').value };
+  if($('#alias').value.trim()) body.alias = $('#alias').value.trim();
+  const exp = parseInt($('#expiry').value,10); if(exp>0) body.expires_in = exp;
+
+  const res = await fetch('/shorten',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data = await res.json();
+  if(!res.ok){ $('#err').textContent = data.error || 'Error'; $('#err').style.display='block'; return; }
+
+  $('#shortLink').textContent = data.short_url;
+  $('#shortLink').href = data.short_url;
+  $('#qr').innerHTML=''; new QRCode($('#qr'),{text:data.short_url,width:96,height:96});
+  $('#result').style.display='flex';
+  $('#copyBtn').onclick=()=>navigator.clipboard.writeText(data.short_url);
+  $('#url').value=''; $('#alias').value='';
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 5000);   // keep the dashboard live
+</script>
+</body>
+</html>
